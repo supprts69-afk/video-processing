@@ -27,7 +27,6 @@ async def create_job(req: JobCreateRequest, db=Depends(get_db_connection)):
             raise Exception("Failed to generate job_id from database")
             
         probe_params = json.dumps({"type": "probe"})
-        # task_index যুক্ত করা হলো
         task_query = """
             INSERT INTO tasks (job_id, task_index, status, processing_params)
             VALUES (:job_id, 0, :task_status, CAST(:params AS JSON))
@@ -47,6 +46,7 @@ async def create_job(req: JobCreateRequest, db=Depends(get_db_connection)):
 
 @router.get("/{job_id}/playlist.m3u8")
 async def get_hls_playlist(job_id: str, db=Depends(get_db_connection)):
+    """Completed খণ্ডগুলো দিয়ে ডায়নামিক HLS Playlist তৈরি করা"""
     query = """
         SELECT processing_params, output_url 
         FROM tasks 
