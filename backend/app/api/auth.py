@@ -1,17 +1,19 @@
 # backend/app/api/auth.py
 import os
-from fastapi import Security, HTTPException, status
+# এখানে Depends যুক্ত করা হয়েছে
+from fastapi import Security, HTTPException, status, Depends
 from fastapi.security import APIKeyHeader, HTTPBearer, HTTPAuthorizationCredentials
 from app.database import get_db_connection
 
-ADMIN_API_SECRET = os.environ["ADMIN_API_SECRET"]
+# os.environ এর বদলে os.getenv ব্যবহার করা হয়েছে যেন ভেরিয়েবল না থাকলেও ক্র্যাশ না করে
+ADMIN_API_SECRET = os.getenv("ADMIN_API_SECRET", "")
 
 admin_scheme = APIKeyHeader(name="X-Admin-Secret")
 worker_scheme = HTTPBearer()
 
 async def verify_admin(api_key: str = Security(admin_scheme)):
     """Secures administrative endpoints."""
-    if api_key != ADMIN_API_SECRET:
+    if not ADMIN_API_SECRET or api_key != ADMIN_API_SECRET:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN, 
             detail="Invalid admin credentials"
@@ -21,7 +23,6 @@ async def verify_admin(api_key: str = Security(admin_scheme)):
 async def verify_worker(credentials: HTTPAuthorizationCredentials = Security(worker_scheme), db=Depends(get_db_connection)):
     """Verifies a worker's scoped token and retrieves their ID."""
     token = credentials.credentials
-    # In production, securely hash the incoming token and compare it with the DB
     import hashlib
     token_hash = hashlib.sha256(token.encode()).hexdigest()
     
