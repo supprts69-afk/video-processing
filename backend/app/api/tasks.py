@@ -12,7 +12,6 @@ class TaskCompleteRequest(BaseModel):
 
 @router.post("/{task_id}/complete")
 async def complete_task(task_id: str, req: TaskCompleteRequest, db=Depends(get_db_connection)):
-    # updated_at = now() রিমুভ করা হয়েছে
     task_query = """
         UPDATE tasks SET status = 'completed', output_url = :url
         WHERE id = :task_id AND status = 'leased' 
@@ -79,7 +78,6 @@ class TaskFailRequest(BaseModel):
 
 @router.post("/{task_id}/fail")
 async def fail_task(task_id: str, req: TaskFailRequest, db=Depends(get_db_connection)):
-    # updated_at = now() রিমুভ করা হয়েছে
     query = """
         UPDATE tasks 
         SET status = CASE WHEN attempt_count < max_attempts THEN 'queued'::task_status ELSE 'failed'::task_status END,
