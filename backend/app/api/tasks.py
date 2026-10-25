@@ -6,7 +6,6 @@ from app.database import get_db_connection
 
 router = APIRouter(prefix="/api/v1/workers/tasks")
 
-# Probe এর জন্য duration অপশনাল হিসেবে যোগ করা হলো
 class TaskCompleteRequest(BaseModel):
     output_url: Optional[str] = None
     duration: Optional[float] = None
@@ -27,23 +26,20 @@ async def complete_task(task_id: str, req: TaskCompleteRequest, db=Depends(get_d
     if isinstance(params, str):
         params = json.loads(params)
 
-    # যদি এটি Probe টাস্ক হয় (অর্থাৎ ভিডিওর দৈর্ঘ্য মাদার API এর কাছে এসেছে)
     if params.get("type") == "probe":
         total_duration = req.duration or 0.0
         
-        # লাইভ ওয়ার্কার কাউন্ট করা (গত ২ মিনিটে যারা হার্টবিট দিয়েছে)
         workers_query = "SELECT count(*) FROM workers WHERE last_heartbeat_at > now() - interval '2 minutes'"
         active_workers = await db.fetch_val(workers_query)
-        
         if active_workers == 0:
-            active_workers = 1 # কমপক্ষে ১টি ওয়ার্কার ধরে নেওয়া হলো
+            active_workers = 1 
             
-        # ভিডিওটিকে লাইভ ওয়ার্কারদের মাঝে সমান ভাগে ভাগ করা
         segment_duration = total_duration / active_workers
         
+        # task_index যুক্ত করা হলো
         task_insert_query = """
-            INSERT INTO tasks (job_id, status, processing_params)
-            VALUES (:job_id, 'queued', :params)
+            INSERT INTO tasks (job_id, task_index, status, processing_params)
+            VALUES (:job_id, :t_index, 'queued', CAST(:params AS JSON))
         """
         for i in range(active_workers):
             start_time = i * segment_duration
@@ -53,16 +49,18 @@ async def complete_task(task_id: str, req: TaskCompleteRequest, db=Depends(get_d
                 "duration": segment_duration,
                 "segment_index": i + 1
             })
-            await db.execute(task_insert_query, {"job_id": job_id, "params": proc_params})
+            await db.execute(task_insert_query, {
+                "job_id": job_id, 
+                "t_index": i + 1,
+                "params": proc_params
+            })
             
-        # জবে টোটাল টাস্কের সংখ্যা আপডেট করা
         await db.execute(
             "UPDATE jobs SET expected_task_count = :count WHERE id = :job_id",
             {"count": active_workers, "job_id": job_id}
         )
         return {"status": "success", "message": f"Video divided into {active_workers} parts"}
 
-    # যদি এটি মেইন ভিডিও প্রসেসিং টাস্ক হয়
     else:
         job_query = """
             UPDATE jobs SET completed_task_count = completed_task_count + 1 
@@ -71,7 +69,6 @@ async def complete_task(task_id: str, req: TaskCompleteRequest, db=Depends(get_d
         """
         job = await db.fetch_one(job_query, {"job_id": job_id})
         
-        # সব টাস্ক শেষ হলে জব completed মার্ক করা
         if job["completed_task_count"] >= job["expected_task_count"]:
             await db.execute("UPDATE jobs SET status = 'completed' WHERE id = :job_id", {"job_id": job_id})
             
