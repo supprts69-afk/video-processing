@@ -1,27 +1,81 @@
-# backend/app/api/tasks.py
+import json
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from datetime import datetime, timedelta, timezone
+from typing import Optional
 from app.database import get_db_connection
 
 router = APIRouter(prefix="/api/v1/workers/tasks")
 
+# Probe এর জন্য duration অপশনাল হিসেবে যোগ করা হলো
 class TaskCompleteRequest(BaseModel):
-    output_url: str
+    output_url: Optional[str] = None
+    duration: Optional[float] = None
 
 @router.post("/{task_id}/complete")
 async def complete_task(task_id: str, req: TaskCompleteRequest, db=Depends(get_db_connection)):
     task_query = """
         UPDATE tasks SET status = 'completed', output_url = :url, updated_at = now() 
-        WHERE id = :task_id AND status = 'leased' RETURNING job_id;
+        WHERE id = :task_id AND status = 'leased' 
+        RETURNING job_id, processing_params;
     """
-    job_id = await db.execute(task_query, {"task_id": task_id, "url": req.output_url})
-    if not job_id:
-        raise HTTPException(status_code=400, detail="Invalid task state or expired lease")
-    
-    job_query = "UPDATE jobs SET completed_task_count = completed_task_count + 1 WHERE id = :job_id RETURNING id, expected_task_count, completed_task_count;"
-    await db.fetch_one(job_query, {"job_id": job_id})
-    return {"status": "success"}
+    task_record = await db.fetch_one(task_query, {"task_id": task_id, "url": req.output_url or ""})
+    if not task_record:
+        raise HTTPException(status_code=400, detail="Invalid task state")
+        
+    job_id = task_record["job_id"]
+    params = task_record["processing_params"]
+    if isinstance(params, str):
+        params = json.loads(params)
+
+    # যদি এটি Probe টাস্ক হয় (অর্থাৎ ভিডিওর দৈর্ঘ্য মাদার API এর কাছে এসেছে)
+    if params.get("type") == "probe":
+        total_duration = req.duration or 0.0
+        
+        # লাইভ ওয়ার্কার কাউন্ট করা (গত ২ মিনিটে যারা হার্টবিট দিয়েছে)
+        workers_query = "SELECT count(*) FROM workers WHERE last_heartbeat_at > now() - interval '2 minutes'"
+        active_workers = await db.fetch_val(workers_query)
+        
+        if active_workers == 0:
+            active_workers = 1 # কমপক্ষে ১টি ওয়ার্কার ধরে নেওয়া হলো
+            
+        # ভিডিওটিকে লাইভ ওয়ার্কারদের মাঝে সমান ভাগে ভাগ করা
+        segment_duration = total_duration / active_workers
+        
+        task_insert_query = """
+            INSERT INTO tasks (job_id, status, processing_params)
+            VALUES (:job_id, 'queued', :params)
+        """
+        for i in range(active_workers):
+            start_time = i * segment_duration
+            proc_params = json.dumps({
+                "type": "process",
+                "start": start_time,
+                "duration": segment_duration,
+                "segment_index": i + 1
+            })
+            await db.execute(task_insert_query, {"job_id": job_id, "params": proc_params})
+            
+        # জবে টোটাল টাস্কের সংখ্যা আপডেট করা
+        await db.execute(
+            "UPDATE jobs SET expected_task_count = :count WHERE id = :job_id",
+            {"count": active_workers, "job_id": job_id}
+        )
+        return {"status": "success", "message": f"Video divided into {active_workers} parts"}
+
+    # যদি এটি মেইন ভিডিও প্রসেসিং টাস্ক হয়
+    else:
+        job_query = """
+            UPDATE jobs SET completed_task_count = completed_task_count + 1 
+            WHERE id = :job_id 
+            RETURNING expected_task_count, completed_task_count;
+        """
+        job = await db.fetch_one(job_query, {"job_id": job_id})
+        
+        # সব টাস্ক শেষ হলে জব completed মার্ক করা
+        if job["completed_task_count"] >= job["expected_task_count"]:
+            await db.execute("UPDATE jobs SET status = 'completed' WHERE id = :job_id", {"job_id": job_id})
+            
+        return {"status": "success"}
 
 class TaskFailRequest(BaseModel):
     error: str
