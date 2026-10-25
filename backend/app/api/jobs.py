@@ -1,5 +1,5 @@
 import json
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel
 from app.database import get_db_connection
 
@@ -11,7 +11,6 @@ class JobCreateRequest(BaseModel):
 
 @router.post("")
 async def create_job(req: JobCreateRequest, db=Depends(get_db_connection)):
-    # নতুন জব তৈরি করা
     job_query = """
         INSERT INTO jobs (source_url, status, expected_task_count, completed_task_count)
         VALUES (:url, 'processing', 0, 0)
@@ -19,7 +18,6 @@ async def create_job(req: JobCreateRequest, db=Depends(get_db_connection)):
     """
     job_id = await db.execute(job_query, {"url": req.source_url})
     
-    # প্রথমে ভিডিওর দৈর্ঘ্য জানার জন্য একটি Probe টাস্ক তৈরি করা
     probe_params = json.dumps({"type": "probe"})
     task_query = """
         INSERT INTO tasks (job_id, status, processing_params)
@@ -28,3 +26,45 @@ async def create_job(req: JobCreateRequest, db=Depends(get_db_connection)):
     await db.execute(task_query, {"job_id": job_id, "params": probe_params})
     
     return {"job_id": str(job_id), "message": "Probe task created successfully"}
+
+@router.get("/{job_id}/playlist.m3u8")
+async def get_hls_playlist(job_id: str, db=Depends(get_db_connection)):
+    """Completed খণ্ডগুলো দিয়ে ডায়নামিক HLS Playlist তৈরি করা"""
+    query = """
+        SELECT processing_params, output_url 
+        FROM tasks 
+        WHERE job_id = :job_id AND status = 'completed' AND output_url IS NOT NULL
+    """
+    tasks = await db.fetch_all(query, {"job_id": job_id})
+    
+    segments = []
+    for t in tasks:
+        params = json.loads(t["processing_params"])
+        if params.get("type") == "process":
+            segments.append({
+                "index": params.get("segment_index", 0),
+                "duration": params.get("duration", 15.0),
+                "url": t["output_url"]
+            })
+            
+    # পার্ট অনুযায়ী সাজানো
+    segments.sort(key=lambda x: x["index"])
+    
+    if not segments:
+        return Response(content="", status_code=404)
+        
+    target_duration = int(max([s["duration"] for s in segments]) + 1)
+    
+    # m3u8 ফাইল জেনারেট করা
+    m3u8 = "#EXTM3U\n"
+    m3u8 += "#EXT-X-VERSION:3\n"
+    m3u8 += f"#EXT-X-TARGETDURATION:{target_duration}\n"
+    m3u8 += "#EXT-X-MEDIA-SEQUENCE:0\n"
+    
+    for s in segments:
+        m3u8 += f"#EXTINF:{s['duration']:.6f},\n"
+        m3u8 += f"{s['url']}\n"
+        
+    m3u8 += "#EXT-X-ENDLIST\n"
+    
+    return Response(content=m3u8, media_type="application/vnd.apple.mpegurl")
