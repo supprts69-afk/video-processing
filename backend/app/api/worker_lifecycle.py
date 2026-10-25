@@ -4,6 +4,9 @@ from pydantic import BaseModel
 import secrets
 import hashlib
 
+# ডাটাবেস কানেকশন ইমপোর্ট করা হলো
+from app.database import get_db_connection
+
 router = APIRouter(prefix="/api/v1/workers")
 
 class RegisterRequest(BaseModel):
@@ -27,7 +30,6 @@ async def register_worker(req: RegisterRequest, db=Depends(get_db_connection)):
         "hash": token_hash
     })
     
-    # The raw token is returned EXACTLY once. It is never stored in plaintext.
     return {"worker_id": str(worker_id), "token": raw_token}
 
 class TaskCompleteRequest(BaseModel):
@@ -36,7 +38,6 @@ class TaskCompleteRequest(BaseModel):
 @router.post("/tasks/{task_id}/complete")
 async def complete_task(task_id: str, req: TaskCompleteRequest, db=Depends(get_db_connection)):
     """Marks a task as complete and increments the job progress atomically."""
-    # 1. Mark task complete
     task_query = """
         UPDATE tasks SET status = 'completed', output_url = :url, updated_at = now()
         WHERE id = :task_id AND status = 'leased'
@@ -46,18 +47,12 @@ async def complete_task(task_id: str, req: TaskCompleteRequest, db=Depends(get_d
     if not job_id:
         raise HTTPException(status_code=400, detail="Invalid task state or expired lease")
 
-    # 2. Increment job completion count
     job_query = """
         UPDATE jobs SET completed_task_count = completed_task_count + 1
         WHERE id = :job_id
         RETURNING id, expected_task_count, completed_task_count;
     """
     job_state = await db.fetch_one(job_query, {"job_id": job_id})
-    
-    # Trigger finalization if all tasks are complete
-    if job_state["completed_task_count"] == job_state["expected_task_count"]:
-        # Trigger async finalization queue/worker here
-        pass
 
     return {"status": "success"}
 
