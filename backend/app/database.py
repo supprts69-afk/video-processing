@@ -2,19 +2,20 @@
 import os
 from databases import Database
 
-# URL ঠিক করা
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-# Supabase PgBouncer (পোর্ট 6543) এর Prepared Statement সমস্যা সমাধানের জন্য
-# statement_cache_size=0 যুক্ত করা হলো
-if DATABASE_URL and "statement_cache_size" not in DATABASE_URL:
-    separator = "&" if "?" in DATABASE_URL else "?"
-    DATABASE_URL += f"{separator}statement_cache_size=0&prepared_statement_cache_size=0"
+# যদি আগের কোনো query string থেকে থাকে, তবে সেটি বাদ দিয়ে ফ্রেশ URL নেওয়া হচ্ছে
+if "?" in DATABASE_URL:
+    DATABASE_URL = DATABASE_URL.split("?")[0]
 
-# ডাটাবেস ইনস্ট্যান্স তৈরি
-database = Database(DATABASE_URL)
+# URL-এর বদলে সরাসরি পাইথন আর্গুমেন্ট হিসেবে statement_cache_size=0 পাস করা হলো
+# এটি asyncpg ড্রাইভারকে বাধ্য করবে Prepared Statement ব্যবহার না করতে
+database = Database(
+    DATABASE_URL,
+    statement_cache_size=0
+)
 
 async def get_db_connection():
     """
