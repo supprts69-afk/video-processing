@@ -2,32 +2,40 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from datetime import datetime, timedelta, timezone
-
-# ডাটাবেস কানেকশন ইমপোর্ট করা হলো
 from app.database import get_db_connection
 
 router = APIRouter(prefix="/api/v1/workers/tasks")
 
-class ProgressReport(BaseModel):
-    progress_percentage: float
+class TaskCompleteRequest(BaseModel):
+    output_url: str
 
-@router.post("/{task_id}/progress")
-async def report_progress(task_id: str, payload: ProgressReport, db=Depends(get_db_connection)):
-    """Extends the lease duration for an active task."""
-    new_expiry = datetime.now(timezone.utc) + timedelta(minutes=5)
+@router.post("/{task_id}/complete")
+async def complete_task(task_id: str, req: TaskCompleteRequest, db=Depends(get_db_connection)):
+    task_query = """
+        UPDATE tasks SET status = 'completed', output_url = :url, updated_at = now() 
+        WHERE id = :task_id AND status = 'leased' RETURNING job_id;
+    """
+    job_id = await db.execute(task_query, {"task_id": task_id, "url": req.output_url})
+    if not job_id:
+        raise HTTPException(status_code=400, detail="Invalid task state or expired lease")
     
+    job_query = "UPDATE jobs SET completed_task_count = completed_task_count + 1 WHERE id = :job_id RETURNING id, expected_task_count, completed_task_count;"
+    await db.fetch_one(job_query, {"job_id": job_id})
+    return {"status": "success"}
+
+class TaskFailRequest(BaseModel):
+    error: str
+
+@router.post("/{task_id}/fail")
+async def fail_task(task_id: str, req: TaskFailRequest, db=Depends(get_db_connection)):
     query = """
         UPDATE tasks 
-        SET lease_expires_at = :new_expiry, progress = :progress, updated_at = now()
+        SET status = CASE WHEN attempt_count < max_attempts THEN 'queued'::task_status ELSE 'failed'::task_status END,
+            worker_id = NULL,
+            error_message = :err,
+            updated_at = now()
         WHERE id = :task_id AND status = 'leased'
-        RETURNING id;
+        RETURNING status;
     """
-    result = await db.execute(query, {
-        "task_id": task_id,
-        "new_expiry": new_expiry,
-        "progress": payload.progress_percentage
-    })
-    
-    if not result:
-        raise HTTPException(status_code=400, detail="Task lease expired or invalid state")
-    return {"status": "lease_extended"}
+    new_status = await db.execute(query, {"task_id": task_id, "err": req.error})
+    return {"new_status": new_status}
