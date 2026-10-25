@@ -12,8 +12,9 @@ class TaskCompleteRequest(BaseModel):
 
 @router.post("/{task_id}/complete")
 async def complete_task(task_id: str, req: TaskCompleteRequest, db=Depends(get_db_connection)):
+    # updated_at = now() রিমুভ করা হয়েছে
     task_query = """
-        UPDATE tasks SET status = 'completed', output_url = :url, updated_at = now() 
+        UPDATE tasks SET status = 'completed', output_url = :url
         WHERE id = :task_id AND status = 'leased' 
         RETURNING job_id, processing_params;
     """
@@ -36,7 +37,6 @@ async def complete_task(task_id: str, req: TaskCompleteRequest, db=Depends(get_d
             
         segment_duration = total_duration / active_workers
         
-        # task_index যুক্ত করা হলো
         task_insert_query = """
             INSERT INTO tasks (job_id, task_index, status, processing_params)
             VALUES (:job_id, :t_index, 'queued', CAST(:params AS JSON))
@@ -79,12 +79,12 @@ class TaskFailRequest(BaseModel):
 
 @router.post("/{task_id}/fail")
 async def fail_task(task_id: str, req: TaskFailRequest, db=Depends(get_db_connection)):
+    # updated_at = now() রিমুভ করা হয়েছে
     query = """
         UPDATE tasks 
         SET status = CASE WHEN attempt_count < max_attempts THEN 'queued'::task_status ELSE 'failed'::task_status END,
             worker_id = NULL,
-            error_message = :err,
-            updated_at = now()
+            error_message = :err
         WHERE id = :task_id AND status = 'leased'
         RETURNING status;
     """
