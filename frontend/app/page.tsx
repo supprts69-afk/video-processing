@@ -4,7 +4,8 @@ import { useEffect, useState, useRef } from 'react'
 import { supabase } from '@/lib/supabaseClient'
 import Hls from 'hls.js'
 
-// কাস্টম HLS Video Player Component
+const BACKEND_URL = 'https://video-processing-ws76.onrender.com'
+
 const HLSPlayer = ({ url }: { url: string }) => {
   const videoRef = useRef<HTMLVideoElement>(null)
 
@@ -55,7 +56,7 @@ export default function Dashboard() {
     setSubmitting(true)
     
     try {
-      const res = await fetch('/api/v1/jobs', {
+      const res = await fetch(`${BACKEND_URL}/api/v1/jobs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ source_url: videoUrl })
@@ -63,6 +64,9 @@ export default function Dashboard() {
       if (res.ok) {
         setVideoUrl('')
         fetchData()
+      } else {
+        const err = await res.json()
+        console.error("Failed to create job:", err)
       }
     } catch (err) {
       console.error(err)
@@ -92,7 +96,6 @@ export default function Dashboard() {
         </form>
       </section>
 
-      {/* Video Player Modal */}
       {playingJobId && (
         <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
           <div className="bg-white p-4 rounded-xl w-full max-w-4xl">
@@ -100,8 +103,7 @@ export default function Dashboard() {
               <h3 className="font-bold text-lg">Seamless Playback (HLS)</h3>
               <button onClick={() => setPlayingJobId(null)} className="text-red-600 font-bold">Close</button>
             </div>
-            {/* Playlist Endpoint-এ রিকোয়েস্ট পাঠানো হচ্ছে */}
-            <HLSPlayer url={`/api/v1/jobs/${playingJobId}/playlist.m3u8`} />
+            <HLSPlayer url={`${BACKEND_URL}/api/v1/jobs/${playingJobId}/playlist.m3u8`} />
           </div>
         </div>
       )}
