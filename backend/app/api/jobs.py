@@ -46,7 +46,6 @@ async def create_job(req: JobCreateRequest, db=Depends(get_db_connection)):
 
 @router.get("/{job_id}/playlist.m3u8")
 async def get_hls_playlist(job_id: str, db=Depends(get_db_connection)):
-    """Completed খণ্ডগুলো দিয়ে ডায়নামিক HLS Playlist তৈরি করা"""
     query = """
         SELECT processing_params, output_url 
         FROM tasks 
