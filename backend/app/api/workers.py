@@ -4,6 +4,9 @@ from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime, timedelta, timezone
 
+# ডাটাবেস কানেকশন ইমপোর্ট করা হলো
+from app.database import get_db_connection
+
 router = APIRouter(prefix="/api/v1/workers")
 
 class ClaimResponse(BaseModel):
@@ -11,6 +14,9 @@ class ClaimResponse(BaseModel):
     job_id: Optional[str]
     processing_params: Optional[dict]
     source_url: Optional[str]
+
+async def update_worker_heartbeat(db, worker_id: str, status: str):
+    await db.execute("UPDATE workers SET last_heartbeat_at = now(), status = :status WHERE id = :id", {"status": status, "id": worker_id})
 
 @router.post("/{worker_id}/claim", response_model=ClaimResponse)
 async def claim_task(worker_id: str, db=Depends(get_db_connection)):
