@@ -12,13 +12,17 @@ class JobCreateRequest(BaseModel):
 @router.post("")
 async def create_job(req: JobCreateRequest, db=Depends(get_db_connection)):
     try:
-        # প্যারামিটার দিয়ে status পাস করা হলো যাতে ENUM টাইপ এরর না হয়
+        # NOT NULL constraint এরর সমাধানের জন্য processing_profile কলামটি যুক্ত করা হলো
         job_query = """
-            INSERT INTO jobs (source_url, status, expected_task_count, completed_task_count)
-            VALUES (:url, :status, 0, 0)
+            INSERT INTO jobs (source_url, status, processing_profile, expected_task_count, completed_task_count)
+            VALUES (:url, :status, CAST(:profile AS JSON), 0, 0)
             RETURNING id;
         """
-        job_id = await db.execute(job_query, {"url": req.source_url, "status": "processing"})
+        job_id = await db.execute(job_query, {
+            "url": req.source_url, 
+            "status": "processing",
+            "profile": json.dumps(req.processing_profile) # খালি JSON {} পাঠানো হচ্ছে
+        })
         
         if not job_id:
             raise Exception("Failed to generate job_id from database")
