@@ -1,5 +1,5 @@
 import json
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, Response, HTTPException
 from pydantic import BaseModel
 from app.database import get_db_connection
 
@@ -11,21 +11,32 @@ class JobCreateRequest(BaseModel):
 
 @router.post("")
 async def create_job(req: JobCreateRequest, db=Depends(get_db_connection)):
-    job_query = """
-        INSERT INTO jobs (source_url, status, expected_task_count, completed_task_count)
-        VALUES (:url, 'processing', 0, 0)
-        RETURNING id;
-    """
-    job_id = await db.execute(job_query, {"url": req.source_url})
-    
-    probe_params = json.dumps({"type": "probe"})
-    task_query = """
-        INSERT INTO tasks (job_id, status, processing_params)
-        VALUES (:job_id, 'queued', :params)
-    """
-    await db.execute(task_query, {"job_id": job_id, "params": probe_params})
-    
-    return {"job_id": str(job_id), "message": "Probe task created successfully"}
+    try:
+        # RETURNING id এর ক্ষেত্রে fetch_val ব্যবহার করা সবচেয়ে নিরাপদ (UUID এরর এড়াতে)
+        job_query = """
+            INSERT INTO jobs (source_url, status, expected_task_count, completed_task_count)
+            VALUES (:url, 'processing', 0, 0)
+            RETURNING id;
+        """
+        job_id = await db.fetch_val(job_query, {"url": req.source_url})
+        
+        if not job_id:
+            raise Exception("Failed to generate job_id")
+            
+        # JSON ডেটা ইনসার্ট করার সময় সরাসরি CAST(:params AS JSON) ব্যবহার করা হলো
+        probe_params = json.dumps({"type": "probe"})
+        task_query = """
+            INSERT INTO tasks (job_id, status, processing_params)
+            VALUES (:job_id, 'queued', CAST(:params AS JSON))
+        """
+        await db.execute(task_query, {"job_id": job_id, "params": probe_params})
+        
+        return {"job_id": str(job_id), "message": "Probe task created successfully"}
+        
+    except Exception as e:
+        print(f"Error creating job: {e}")
+        # জেনেরিক 500 এররের বদলে আসল ডাটাবেস এররটি রিটার্ন করবে
+        raise HTTPException(status_code=500, detail=f"Database execution failed: {str(e)}")
 
 @router.get("/{job_id}/playlist.m3u8")
 async def get_hls_playlist(job_id: str, db=Depends(get_db_connection)):
