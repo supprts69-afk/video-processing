@@ -1,5 +1,4 @@
 // frontend/app/layout.tsx
-import './globals.css' // যদি আপনার globals.css ফাইল থাকে, না থাকলে এই লাইনটি মুছে দিন
 
 export const metadata = {
   title: 'Video Processing Platform',
