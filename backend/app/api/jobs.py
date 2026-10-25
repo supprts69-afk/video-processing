@@ -12,7 +12,6 @@ class JobCreateRequest(BaseModel):
 @router.post("")
 async def create_job(req: JobCreateRequest, db=Depends(get_db_connection)):
     try:
-        # NOT NULL constraint এরর সমাধানের জন্য processing_profile কলামটি যুক্ত করা হলো
         job_query = """
             INSERT INTO jobs (source_url, status, processing_profile, expected_task_count, completed_task_count)
             VALUES (:url, :status, CAST(:profile AS JSON), 0, 0)
@@ -21,16 +20,17 @@ async def create_job(req: JobCreateRequest, db=Depends(get_db_connection)):
         job_id = await db.execute(job_query, {
             "url": req.source_url, 
             "status": "processing",
-            "profile": json.dumps(req.processing_profile) # খালি JSON {} পাঠানো হচ্ছে
+            "profile": json.dumps(req.processing_profile)
         })
         
         if not job_id:
             raise Exception("Failed to generate job_id from database")
             
         probe_params = json.dumps({"type": "probe"})
+        # task_index যুক্ত করা হলো
         task_query = """
-            INSERT INTO tasks (job_id, status, processing_params)
-            VALUES (:job_id, :task_status, CAST(:params AS JSON))
+            INSERT INTO tasks (job_id, task_index, status, processing_params)
+            VALUES (:job_id, 0, :task_status, CAST(:params AS JSON))
         """
         await db.execute(task_query, {
             "job_id": job_id, 
@@ -47,7 +47,6 @@ async def create_job(req: JobCreateRequest, db=Depends(get_db_connection)):
 
 @router.get("/{job_id}/playlist.m3u8")
 async def get_hls_playlist(job_id: str, db=Depends(get_db_connection)):
-    """Completed খণ্ডগুলো দিয়ে ডায়নামিক HLS Playlist তৈরি করা"""
     query = """
         SELECT processing_params, output_url 
         FROM tasks 
@@ -65,7 +64,6 @@ async def get_hls_playlist(job_id: str, db=Depends(get_db_connection)):
                 "url": t["output_url"]
             })
             
-    # পার্ট অনুযায়ী সাজানো
     segments.sort(key=lambda x: x["index"])
     
     if not segments:
@@ -73,7 +71,6 @@ async def get_hls_playlist(job_id: str, db=Depends(get_db_connection)):
         
     target_duration = int(max([s["duration"] for s in segments]) + 1)
     
-    # m3u8 ফাইল জেনারেট করা
     m3u8 = "#EXTM3U\n"
     m3u8 += "#EXT-X-VERSION:3\n"
     m3u8 += f"#EXT-X-TARGETDURATION:{target_duration}\n"
