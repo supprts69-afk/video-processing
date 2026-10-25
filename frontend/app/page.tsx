@@ -1,7 +1,29 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { supabase } from '@/lib/supabaseClient'
+import Hls from 'hls.js'
+
+// কাস্টম HLS Video Player Component
+const HLSPlayer = ({ url }: { url: string }) => {
+  const videoRef = useRef<HTMLVideoElement>(null)
+
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video) return
+
+    if (Hls.isSupported()) {
+      const hls = new Hls()
+      hls.loadSource(url)
+      hls.attachMedia(video)
+      return () => hls.destroy()
+    } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+      video.src = url
+    }
+  }, [url])
+
+  return <video ref={videoRef} controls autoPlay className="w-full rounded-lg shadow-lg bg-black" />
+}
 
 export default function Dashboard() {
   const [jobs, setJobs] = useState<any[]>([])
@@ -9,33 +31,24 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true)
   const [videoUrl, setVideoUrl] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [playingJobId, setPlayingJobId] = useState<string | null>(null)
 
-  // ডেটা ফেচ করার ফাংশন
   const fetchData = async () => {
-    const { data: jobsData } = await supabase
-      .from('jobs')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(10)
+    const { data: jobsData } = await supabase.from('jobs').select('*').order('created_at', { ascending: false }).limit(10)
     if (jobsData) setJobs(jobsData)
 
-    const { data: workersData } = await supabase
-      .from('workers')
-      .select('*')
-      .order('last_heartbeat_at', { ascending: false })
+    const { data: workersData } = await supabase.from('workers').select('*').order('last_heartbeat_at', { ascending: false })
     if (workersData) setWorkers(workersData)
     
     setLoading(false)
   }
 
-  // প্রতি ৫ সেকেন্ড পর পর অটোমেটিক ডেটা রিফ্রেশ
   useEffect(() => {
     fetchData()
     const interval = setInterval(fetchData, 5000)
     return () => clearInterval(interval)
   }, [])
 
-  // নতুন জব সাবমিট করার ফাংশন
   const handleCreateJob = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!videoUrl) return
@@ -45,17 +58,11 @@ export default function Dashboard() {
       const res = await fetch('/api/v1/jobs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          source_url: videoUrl,
-          processing_profile: { segment_duration: 15, resolution: "1920x1080", codec: "libx264", preset: "fast" }
-        })
+        body: JSON.stringify({ source_url: videoUrl })
       })
-      
       if (res.ok) {
         setVideoUrl('')
-        fetchData() // সাথে সাথে লিস্ট আপডেট করা
-      } else {
-        alert("Failed to create job")
+        fetchData()
       }
     } catch (err) {
       console.error(err)
@@ -63,96 +70,76 @@ export default function Dashboard() {
     setSubmitting(false)
   }
 
-  if (loading) return <div className="flex items-center justify-center min-h-screen text-lg font-medium text-gray-600">Loading dashboard...</div>
+  if (loading) return <div className="flex items-center justify-center min-h-screen">Loading dashboard...</div>
 
   return (
-    <div className="max-w-6xl mx-auto p-6 space-y-8">
+    <div className="max-w-6xl mx-auto p-6 space-y-8 bg-gray-50 min-h-screen">
       <header className="border-b pb-6 mb-8">
-        <h1 className="text-3xl font-extrabold tracking-tight text-gray-900">Distributed Video Platform</h1>
-        <p className="text-gray-500 mt-2">Manage FFmpeg workers and video processing jobs</p>
+        <h1 className="text-3xl font-extrabold text-gray-900">Distributed HLS Video Platform</h1>
       </header>
 
-      {/* Job Submission Form */}
-      <section className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-        <h2 className="text-xl font-bold text-gray-800 mb-4">Create New Job</h2>
+      <section className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+        <h2 className="text-xl font-bold text-gray-800 mb-4">Process New Video</h2>
         <form onSubmit={handleCreateJob} className="flex gap-4">
           <input
-            type="url"
-            required
-            placeholder="Enter public .mp4 video URL (e.g., https://example.com/video.mp4)"
-            className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            value={videoUrl}
-            onChange={(e) => setVideoUrl(e.target.value)}
+            type="url" required placeholder="Enter YouTube or Drive link..."
+            className="flex-1 px-4 py-2 border border-gray-300 rounded-lg"
+            value={videoUrl} onChange={(e) => setVideoUrl(e.target.value)}
           />
-          <button 
-            type="submit" 
-            disabled={submitting}
-            className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg disabled:opacity-50 transition-colors"
-          >
+          <button type="submit" disabled={submitting} className="px-6 py-2 bg-blue-600 text-white font-semibold rounded-lg">
             {submitting ? 'Submitting...' : 'Process Video'}
           </button>
         </form>
       </section>
 
+      {/* Video Player Modal */}
+      {playingJobId && (
+        <div className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-4">
+          <div className="bg-white p-4 rounded-xl w-full max-w-4xl">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="font-bold text-lg">Seamless Playback (HLS)</h3>
+              <button onClick={() => setPlayingJobId(null)} className="text-red-600 font-bold">Close</button>
+            </div>
+            {/* Playlist Endpoint-এ রিকোয়েস্ট পাঠানো হচ্ছে */}
+            <HLSPlayer url={`/api/v1/jobs/${playingJobId}/playlist.m3u8`} />
+          </div>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* Workers List */}
         <section className="lg:col-span-1">
-          <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center justify-between">
-            Active Workers
-            <span className="bg-blue-100 text-blue-800 text-xs px-2.5 py-0.5 rounded-full">{workers.length}</span>
-          </h2>
+          <h2 className="text-xl font-bold text-gray-800 mb-4">Active Servers</h2>
           <div className="space-y-3">
-            {workers.length === 0 && <p className="text-gray-500 text-sm">No workers registered yet.</p>}
             {workers.map(w => (
-              <div key={w.id} className="p-4 bg-white rounded-xl shadow-sm border border-gray-100 flex justify-between items-center">
-                <div className="flex flex-col">
-                  <span className="font-semibold text-gray-700">{w.name}</span>
-                  <span className="text-xs text-gray-400 font-mono mt-1">{w.id.substring(0,8)}</span>
-                </div>
-                <span className={`px-3 py-1 text-xs font-bold uppercase rounded-full tracking-wider ${w.status === 'busy' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700'}`}>
-                  {w.status}
+              <div key={w.id} className="p-4 bg-white rounded-xl shadow-sm border">
+                <span className="font-semibold">{w.name}</span>
+                <span className={`block mt-2 text-xs font-bold ${w.status === 'busy' ? 'text-amber-600' : 'text-emerald-600'}`}>
+                  {w.status.toUpperCase()}
                 </span>
               </div>
             ))}
           </div>
         </section>
 
-        {/* Jobs List */}
         <section className="lg:col-span-2">
-          <h2 className="text-xl font-bold text-gray-800 mb-4">Recent Processing Jobs</h2>
-          <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="bg-gray-50 border-b border-gray-100 text-gray-500 text-sm uppercase tracking-wider">
-                  <th className="p-4 font-medium">Job ID</th>
-                  <th className="p-4 font-medium">Status</th>
-                  <th className="p-4 font-medium">Progress</th>
-                  <th className="p-4 font-medium">Link</th>
-                </tr>
+          <h2 className="text-xl font-bold text-gray-800 mb-4">Processing Jobs</h2>
+          <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+            <table className="w-full text-left">
+              <thead className="bg-gray-100 text-gray-600">
+                <tr><th className="p-4">Job ID</th><th className="p-4">Status</th><th className="p-4">Progress</th><th className="p-4">Action</th></tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
-                {jobs.length === 0 && (
-                  <tr><td colSpan={4} className="p-8 text-center text-gray-500">No jobs found.</td></tr>
-                )}
+              <tbody className="divide-y">
                 {jobs.map(job => (
-                  <tr key={job.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="p-4 font-mono text-sm text-gray-600">{job.id.substring(0,8)}...</td>
+                  <tr key={job.id}>
+                    <td className="p-4 font-mono text-sm">{job.id.substring(0,8)}...</td>
+                    <td className="p-4 font-bold text-sm uppercase">{job.status}</td>
+                    <td className="p-4">{job.completed_task_count} / {job.expected_task_count || '?'} Parts</td>
                     <td className="p-4">
-                      <span className={`px-2.5 py-1 text-xs font-semibold uppercase rounded-full tracking-wide 
-                        ${job.status === 'completed' ? 'bg-green-100 text-green-700' : 
-                          job.status === 'queued' ? 'bg-gray-100 text-gray-700' : 'bg-blue-100 text-blue-700'}`}>
-                        {job.status}
-                      </span>
-                    </td>
-                    <td className="p-4 text-sm font-medium text-gray-700">
-                      {job.completed_task_count} / {job.expected_task_count} Tasks
-                    </td>
-                    <td className="p-4">
-                      {job.output_url ? (
-                        <a href={job.output_url} target="_blank" rel="noreferrer" className="text-blue-600 hover:underline text-sm font-medium">View</a>
-                      ) : (
-                        <span className="text-gray-400 text-sm">-</span>
-                      )}
+                      {job.status === 'completed' ? (
+                        <button onClick={() => setPlayingJobId(job.id)} className="text-white bg-green-600 px-3 py-1 rounded text-sm font-bold">
+                          ▶ Play Video
+                        </button>
+                      ) : <span className="text-gray-400 text-sm">Processing...</span>}
                     </td>
                   </tr>
                 ))}
