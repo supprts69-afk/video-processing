@@ -1,18 +1,14 @@
-// frontend/app/layout.tsx
+import './globals.css'
 
 export const metadata = {
-  title: 'Video Processing Platform',
-  description: 'Distributed FFmpeg video processing dashboard',
+  title: 'Video Processing Dashboard',
+  description: 'Distributed FFmpeg Platform',
 }
 
-export default function RootLayout({
-  children,
-}: {
-  children: React.ReactNode
-}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en">
-      <body className="bg-white text-gray-900">
+      <body className="text-gray-900 antialiased font-sans">
         {children}
       </body>
     </html>
